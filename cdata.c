@@ -16,8 +16,12 @@
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
+#include "cdata_ioctl.h"
+
 #define CDATA_MAJOR 121
 #define	BUF_SIZE	32
+
+static DEFINE_MUTEX(ioctl_lock);
 
 struct cdata_t {
 	char buf[BUF_SIZE];
@@ -82,8 +86,48 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 
 static long cdata_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	printk(KERN_ALERT "cdata in ioctl\n");
-	return 0;
+	struct cdata_t *cdata = (struct cdata_t *)filp->private_data;
+	char *buf;
+	int idx;
+	int i;
+	int ret = 0;
+	char *user;
+	int size;
+
+	if (mutex_lock_interruptible(&ioctl_lock))
+		return -EINTR;
+
+	user = (char *)arg;
+	size = sizeof(*user);
+
+	idx = cdata->idx;
+	buf = cdata->buf;
+
+	switch (cmd) {
+	case IOCTL_EMPTY:
+		idx = 0;
+		break;
+	case IOCTL_SYNC:
+		printk(KERN_ALERT "%s\n", buf);
+		break;
+	case IOCTL_NAME:
+		for (i = 0; i < size; i++) {
+			if (idx > (BUF_SIZE - 1)) {
+				ret = -EFAULT;
+				goto exit;
+			}
+			copy_from_user(&buf[idx], &user[i], 1);
+			idx++;
+		}
+		break;
+	default:
+		goto exit;
+	}
+
+exit:
+	cdata->idx = idx;
+	mutex_unlock(&ioctl_lock);
+	return ret;
 }
 
 static struct file_operations cdata_fops = {
