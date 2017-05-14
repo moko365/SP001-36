@@ -21,16 +21,20 @@
 #include "cdata_ioctl.h"
 
 #define CDATA_MAJOR 121
-#define	BUF_SIZE	32
+#define	BUF_SIZE 512
+#define FRAMEBUFFER_SIZE (640*480*1)
 
 static DEFINE_MUTEX(ioctl_lock);
 static struct dentry *debugfs;
+static unsigned int framebuffer_off;
 
 struct cdata_t {
-	char buf[BUF_SIZE];
-	int  idx;
+	unsigned char buf[BUF_SIZE];
+	int idx;
 	wait_queue_head_t writeable;
 	struct timer_list timer;
+
+	unsigned char *iomem;
 };
 
 static int cdata_open(struct inode *inode, struct file *filp)
@@ -41,6 +45,7 @@ static int cdata_open(struct inode *inode, struct file *filp)
 
 	cdata = kzalloc(sizeof(*cdata), GFP_KERNEL);
 	cdata->idx = 0;
+	cdata->iomem = ioremap(0xe0000000, FRAMEBUFFER_SIZE);
 
 	init_waitqueue_head(&cdata->writeable);
 	init_timer(&cdata->timer);
@@ -53,9 +58,16 @@ static int cdata_open(struct inode *inode, struct file *filp)
 static int cdata_close(struct inode *inode, struct file *filp)
 {
 	struct cdata_t *cdata = (struct cdata_t *)filp->private_data;
+	int idx;
+	int i;
 
-	printk(KERN_ALERT "buf: %s\n", cdata->buf);
+	idx = cdata->idx;
 
+	for (i = 0; i < idx; i++) {
+		printk(KERN_ALERT "buf[%d]: %d\n", i, cdata->buf[i]);
+	}
+
+	del_timer(&cdata->timer);
 	kfree(cdata);
 	
 	return 0;
@@ -71,6 +83,17 @@ static ssize_t cdata_read(struct file *filp, const char __user *user,
 void *write_framebuffer(unsigned long arg)
 {
 	struct cdata_t *cdata = (struct cdata_t *)arg;
+	unsigned char *iomem;
+	int i;
+
+	iomem = cdata->iomem;
+
+	for (i = 0; i < BUF_SIZE - 1; i++) {
+		if (framebuffer_off >= FRAMEBUFFER_SIZE)
+			framebuffer_off = 0;
+		writeb(cdata->buf[i], iomem + framebuffer_off);
+		framebuffer_off++;
+	}
 
 	cdata->idx = 0;
 	wake_up_interruptible(&cdata->writeable);
@@ -93,7 +116,7 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 			add_wait_queue(&cdata->writeable, &wait);
 			current->state = TASK_INTERRUPTIBLE;
 
-			timer->expires = 1*HZ;			
+			timer->expires = 1;			
 			timer->data = (unsigned long)cdata;
 			timer->function = write_framebuffer;
 			add_timer(timer);
@@ -208,6 +231,8 @@ int cdata_init_module(void)
 {
 	int ret = 0;
 
+	framebuffer_off = 0;
+
 	debugfs = debugfs_create_file("cdata", S_IRUGO, NULL, NULL, &cdata_fops);
 
 	if (IS_ERR(debugfs)) {
@@ -215,6 +240,8 @@ int cdata_init_module(void)
 		printk(KERN_ALERT "debugfs_create_file failed\n");
 		goto exit;
 	}
+
+	printk(KERN_ALERT "cdata: debugfs created\n");
 
 	ret = platform_driver_register(&cdata_plat_driver);
 exit:
