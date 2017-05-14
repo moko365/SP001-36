@@ -101,9 +101,9 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 			schedule();
 
 			remove_wait_queue(&cdata->writeable, &wait);
+			idx = cdata->idx;
 		}
 		copy_from_user(&cdata->buf[idx], &user[i], 1);
-
 		idx++;
 	}
 
