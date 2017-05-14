@@ -14,6 +14,7 @@
 #include <linux/input.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
+#include <linux/debugfs.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
@@ -23,10 +24,13 @@
 #define	BUF_SIZE	32
 
 static DEFINE_MUTEX(ioctl_lock);
+static struct dentry *debugfs;
 
 struct cdata_t {
 	char buf[BUF_SIZE];
 	int  idx;
+	wait_queue_head_t writeable;
+	struct timer_list timer;
 };
 
 static int cdata_open(struct inode *inode, struct file *filp)
@@ -37,6 +41,9 @@ static int cdata_open(struct inode *inode, struct file *filp)
 
 	cdata = kzalloc(sizeof(*cdata), GFP_KERNEL);
 	cdata->idx = 0;
+
+	init_waitqueue_head(&cdata->writeable);
+	init_timer(&cdata->timer);
 
 	filp->private_data = (void *)cdata;
 
@@ -61,18 +68,36 @@ static ssize_t cdata_read(struct file *filp, const char __user *user,
 	return 0;
 }
 
+void *write_framebuffer(unsigned long arg)
+{
+	struct cdata_t *cdata = (struct cdata_t *)arg;
+
+	cdata->idx = 0;
+	// wake up
+}
+
 static ssize_t cdata_write(struct file *filp, const char __user *user, 
 	size_t size, loff_t *off)
 {
 	struct cdata_t *cdata = (struct cdata_t *)filp->private_data;
+	DECLARE_WAITQUEUE(wait, current);
+	struct timer_list *timer;
 	int i;
 	int idx;
 
 	idx = cdata->idx;
+	timer = &cdata->timer;
 
 	for (i = 0; i < size; i++) {
 		if (idx > (BUF_SIZE - 1)) {
+			add_wait_queue(&cdata->writeable, &wait);
 			current->state = TASK_INTERRUPTIBLE;
+
+			timer->expires = 1*HZ;			
+			timer->data = (unsigned long)cdata;
+			timer->function = write_framebuffer;
+			add_timer(timer);
+
 			schedule();
 		}
 		copy_from_user(&cdata->buf[idx], &user[i], 1);
@@ -179,12 +204,25 @@ static struct platform_driver cdata_plat_driver = {
 
 int cdata_init_module(void)
 {
-	return platform_driver_register(&cdata_plat_driver);
+	int ret = 0;
+
+	debugfs = debugfs_create_file("cdata", S_IRUGO, NULL, NULL, &cdata_fops);
+
+	if (IS_ERR(debugfs)) {
+		ret = PTR_ERR(debugfs);
+		printk(KERN_ALERT "debugfs_create_file failed\n");
+		goto exit;
+	}
+
+	ret = platform_driver_register(&cdata_plat_driver);
+exit:
+	return ret;
 }
 
 void cdata_cleanup_module(void)
 {
 	platform_driver_unregister(&cdata_plat_driver);
+	debugfs_remove(debugfs);
 }
 
 module_init(cdata_init_module);
