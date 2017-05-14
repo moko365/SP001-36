@@ -9,7 +9,7 @@ int main(void)
     pid_t child;
 
     child = fork();
-    fd = open("/dev/cdata", O_RDWR);
+    fd = open("/dev/cdata-misc", O_RDWR);
 
     if (child != 0) {
         write(fd, "h", 1);
@@ -20,7 +20,8 @@ int main(void)
         write(fd, "o", 1);
 	ioctl(fd, IOCTL_SYNC, 0);
     } else {
-        write(fd, "12345", 5);
+	while(1)
+            write(fd, "12345", 5);
     }
 
     close(fd);
