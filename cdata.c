@@ -13,6 +13,7 @@
 #include <linux/miscdevice.h>
 #include <linux/input.h>
 #include <linux/slab.h>
+#include <linux/platform_device.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
@@ -145,7 +146,7 @@ static struct miscdevice cdata_miscdev = {
 	.fops	= &cdata_fops,
 };
 
-int cdata_init_module(void)
+static int cdata_plat_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 
@@ -161,10 +162,29 @@ exit:
 	return ret;
 }
 
-void cdata_cleanup_module(void)
+static int cdata_plat_remove(struct platform_device *pdev)
 {
 	misc_deregister(&cdata_miscdev);
 	printk(KERN_ALERT "cdata module: unregisterd.\n");
+}
+
+static struct platform_driver cdata_plat_driver = {
+	.probe 			= cdata_plat_probe,
+	.remove 		= cdata_plat_remove,
+	.driver 		= {
+		   .name	= "cdata",
+		   .owner	= THIS_MODULE,
+	},
+};
+
+int cdata_init_module(void)
+{
+	return platform_driver_register(&cdata_plat_driver);
+}
+
+void cdata_cleanup_module(void)
+{
+	platform_driver_unregister(&cdata_plat_driver);
 }
 
 module_init(cdata_init_module);
