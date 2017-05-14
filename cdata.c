@@ -73,7 +73,7 @@ void *write_framebuffer(unsigned long arg)
 	struct cdata_t *cdata = (struct cdata_t *)arg;
 
 	cdata->idx = 0;
-	// wake up
+	wake_up_interruptible(&cdata->writeable);
 }
 
 static ssize_t cdata_write(struct file *filp, const char __user *user, 
@@ -99,6 +99,8 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 			add_timer(timer);
 
 			schedule();
+
+			remove_wait_queue(&cdata->writeable, &wait);
 		}
 		copy_from_user(&cdata->buf[idx], &user[i], 1);
 
