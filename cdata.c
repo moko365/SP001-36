@@ -108,7 +108,7 @@ static long cdata_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		idx = 0;
 		break;
 	case IOCTL_SYNC:
-		printk(KERN_ALERT "%s\n", buf);
+		printk(KERN_ALERT "in ioctl: %s\n", buf);
 		break;
 	case IOCTL_NAME:
 		for (i = 0; i < size; i++) {
@@ -131,8 +131,7 @@ exit:
 }
 
 static struct file_operations cdata_fops = {
-    owner:      THIS_MODULE,
-
+    owner:      	THIS_MODULE,
     open:		cdata_open,
     read:		cdata_read,
     write:		cdata_write,
@@ -140,19 +139,31 @@ static struct file_operations cdata_fops = {
     release:    	cdata_close
 };
 
+static struct miscdevice cdata_miscdev = {
+	.minor	= 77,
+	.name	= "cdata-misc",
+	.fops	= &cdata_fops,
+};
+
 int cdata_init_module(void)
 {
-	if (register_chrdev(CDATA_MAJOR, "cdata", &cdata_fops)) {
-	    printk(KERN_ALERT "cdata module: can't registered.\n");
-	    return -1;
-    	}
-	printk(KERN_ALERT "cdata module: registerd!\n");
-	return 0;
+	int ret = 0;
+
+	ret = misc_register(&cdata_miscdev);
+	if (ret < 0) {
+		printk(KERN_ALERT "misc_register failed\n");
+		goto exit;
+	}
+
+	printk(KERN_ALERT "cdata module: registered!\n");
+
+exit:
+	return ret;
 }
 
 void cdata_cleanup_module(void)
 {
-	unregister_chrdev(CDATA_MAJOR, "cdata");
+	misc_deregister(&cdata_miscdev);
 	printk(KERN_ALERT "cdata module: unregisterd.\n");
 }
 
