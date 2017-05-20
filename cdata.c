@@ -20,6 +20,8 @@
 
 #include "cdata_ioctl.h"
 
+#define	__ENABLE_REENTRANT__ 1
+
 #define CDATA_MAJOR 121
 #define	BUF_SIZE 64
 
@@ -124,7 +126,7 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 	timer = &cdata->timer;
 
 	for (i = 0; i < size; i++) {
-		if /* while */ (idx > (BUF_SIZE - 1)) {
+		while (idx > (BUF_SIZE - 1)) {
 			add_wait_queue(&cdata->writeable, &wait);
 			current->state = TASK_UNINTERRUPTIBLE;
 
