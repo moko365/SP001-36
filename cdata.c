@@ -21,12 +21,15 @@
 #include "cdata_ioctl.h"
 
 #define CDATA_MAJOR 121
-#define	BUF_SIZE 512
+#define	BUF_SIZE 64
+
+#ifdef __USE_FBMEM__
 #define FRAMEBUFFER_SIZE (640*480*1)
+static unsigned int framebuffer_off;
+#endif
 
 static DEFINE_MUTEX(ioctl_lock);
 static struct dentry *debugfs;
-static unsigned int framebuffer_off;
 
 struct cdata_t {
 	unsigned char buf[BUF_SIZE];
@@ -34,7 +37,9 @@ struct cdata_t {
 	wait_queue_head_t writeable;
 	struct timer_list timer;
 
+#ifdef __USE_FBMEM__
 	unsigned char *iomem;
+#endif
 };
 
 static int cdata_open(struct inode *inode, struct file *filp)
@@ -45,7 +50,9 @@ static int cdata_open(struct inode *inode, struct file *filp)
 
 	cdata = kzalloc(sizeof(*cdata), GFP_KERNEL);
 	cdata->idx = 0;
+#ifdef __USE_FBMEM__
 	cdata->iomem = ioremap(0xe0000000, FRAMEBUFFER_SIZE);
+#endif
 
 	init_waitqueue_head(&cdata->writeable);
 	init_timer(&cdata->timer);
@@ -64,7 +71,7 @@ static int cdata_close(struct inode *inode, struct file *filp)
 	idx = cdata->idx;
 
 	for (i = 0; i < idx; i++) {
-		printk(KERN_ALERT "buf[%d]: %d\n", i, cdata->buf[i]);
+		printk(KERN_ALERT "buf[%d]: %c\n", i, cdata->buf[i]);
 	}
 
 	del_timer(&cdata->timer);
@@ -83,9 +90,10 @@ static ssize_t cdata_read(struct file *filp, const char __user *user,
 void *write_framebuffer(unsigned long arg)
 {
 	struct cdata_t *cdata = (struct cdata_t *)arg;
-	unsigned char *iomem;
 	int i;
 
+#ifdef __USE_FBMEM__
+	unsigned char *iomem;
 	iomem = cdata->iomem;
 
 	for (i = 0; i < BUF_SIZE - 1; i++) {
@@ -94,7 +102,7 @@ void *write_framebuffer(unsigned long arg)
 		writeb(cdata->buf[i], iomem + framebuffer_off);
 		framebuffer_off++;
 	}
-
+#endif
 	cdata->idx = 0;
 	wake_up_interruptible(&cdata->writeable);
 }
@@ -108,15 +116,19 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 	int i;
 	int idx;
 
+#if __ENABLE_REENTRANT__
+	if (mutex_lock_interruptible(&ioctl_lock))
+		return -EINTR;
+#endif
 	idx = cdata->idx;
 	timer = &cdata->timer;
 
 	for (i = 0; i < size; i++) {
-		if (idx > (BUF_SIZE - 1)) {
+		if /* while */ (idx > (BUF_SIZE - 1)) {
 			add_wait_queue(&cdata->writeable, &wait);
-			current->state = TASK_INTERRUPTIBLE;
+			current->state = TASK_UNINTERRUPTIBLE;
 
-			timer->expires = 1;			
+			timer->expires = 10;			
 			timer->data = (unsigned long)cdata;
 			timer->function = write_framebuffer;
 			add_timer(timer);
@@ -125,12 +137,16 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 
 			remove_wait_queue(&cdata->writeable, &wait);
 			idx = cdata->idx;
+			printk(KERN_ALERT "[debug] idx = %d\n", idx);
 		}
 		copy_from_user(&cdata->buf[idx], &user[i], 1);
 		idx++;
 	}
 
 	cdata->idx = idx;
+#if __ENABLE_REENTRANT__
+	mutex_unlock(&ioctl_lock);
+#endif
 
 	return 0;
 }
@@ -231,8 +247,9 @@ int cdata_init_module(void)
 {
 	int ret = 0;
 
+#ifdef __USE_FBMEM__
 	framebuffer_off = 0;
-
+#endif
 	debugfs = debugfs_create_file("cdata", S_IRUGO, NULL, NULL, &cdata_fops);
 
 	if (IS_ERR(debugfs)) {
