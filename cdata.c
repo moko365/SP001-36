@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/debugfs.h>
+#include <linux/spinlock.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
@@ -38,7 +39,8 @@ struct cdata_t {
 	int idx;
 	wait_queue_head_t writeable;
 	struct timer_list timer;
-
+	struct mutex write_lock;
+	spinlock_t lock;
 #ifdef __USE_FBMEM__
 	unsigned char *iomem;
 #endif
@@ -58,6 +60,8 @@ static int cdata_open(struct inode *inode, struct file *filp)
 
 	init_waitqueue_head(&cdata->writeable);
 	init_timer(&cdata->timer);
+	mutex_init(&cdata->write_lock);
+	spin_lock_init(&cdata->lock);
 
 	filp->private_data = (void *)cdata;
 
@@ -118,8 +122,8 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 	int i;
 	int idx;
 
-#if __ENABLE_REENTRANT__
-	if (mutex_lock_interruptible(&ioctl_lock))
+#ifdef __ENABLE_REENTRANT__
+	if (mutex_lock_interruptible(&cdata->write_lock))
 		return -EINTR;
 #endif
 	idx = cdata->idx;
@@ -127,15 +131,24 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 
 	for (i = 0; i < size; i++) {
 		while (idx > (BUF_SIZE - 1)) {
+#if 1
 			add_wait_queue(&cdata->writeable, &wait);
 			current->state = TASK_UNINTERRUPTIBLE;
+#else
+			prepare_to_wait(&cdata->writeable, &wait, TASK_UNINTERRUPTIBLE);
+#endif
 
-			timer->expires = 10;			
+			timer->expires = 100;			
 			timer->data = (unsigned long)cdata;
 			timer->function = write_framebuffer;
 			add_timer(timer);
-
+#ifdef __ENABLE_REENTRANT__
+			mutex_unlock(&cdata->write_lock);
+#endif
 			schedule();
+#ifdef __ENABLE_REENTRANT__
+			mutex_lock_interruptible(&cdata->write_lock);
+#endif
 
 			remove_wait_queue(&cdata->writeable, &wait);
 			idx = cdata->idx;
@@ -146,8 +159,8 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 	}
 
 	cdata->idx = idx;
-#if __ENABLE_REENTRANT__
-	mutex_unlock(&ioctl_lock);
+#ifdef __ENABLE_REENTRANT__
+	mutex_unlock(&cdata->write_lock);
 #endif
 
 	return 0;
@@ -261,6 +274,8 @@ int cdata_init_module(void)
 	}
 
 	printk(KERN_ALERT "cdata: debugfs created\n");
+
+	mutex_init(&ioctl_lock);
 
 	ret = platform_driver_register(&cdata_plat_driver);
 exit:
