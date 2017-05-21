@@ -16,6 +16,7 @@
 #include <linux/platform_device.h>
 #include <linux/debugfs.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
@@ -34,11 +35,15 @@ static unsigned int framebuffer_off;
 static DEFINE_MUTEX(ioctl_lock);
 static struct dentry *debugfs;
 
+void *write_framebuffer_with_timer(unsigned long);
+void write_framebuffer_with_work(struct work_struct *);
+
 struct cdata_t {
 	unsigned char buf[BUF_SIZE];
 	int idx;
 	wait_queue_head_t writeable;
 	struct timer_list timer;
+	struct work_struct work;
 	struct mutex write_lock;
 	spinlock_t lock;
 #ifdef __USE_FBMEM__
@@ -60,6 +65,7 @@ static int cdata_open(struct inode *inode, struct file *filp)
 
 	init_waitqueue_head(&cdata->writeable);
 	init_timer(&cdata->timer);
+	INIT_WORK(&cdata->work, write_framebuffer_with_work);
 	mutex_init(&cdata->write_lock);
 	spin_lock_init(&cdata->lock);
 
@@ -93,7 +99,14 @@ static ssize_t cdata_read(struct file *filp, const char __user *user,
 	return 0;
 }
 
-void *write_framebuffer(unsigned long arg)
+void write_framebuffer_with_work(struct work_struct *work)
+{
+	struct cdata_t *cdata = container_of(work, struct cdata_t, work);
+	cdata->idx = 0;
+	wake_up_interruptible(&cdata->writeable);
+}
+
+void *write_framebuffer_with_timer(unsigned long arg)
 {
 	struct cdata_t *cdata = (struct cdata_t *)arg;
 	int i;
@@ -138,10 +151,14 @@ static ssize_t cdata_write(struct file *filp, const char __user *user,
 			prepare_to_wait(&cdata->writeable, &wait, TASK_UNINTERRUPTIBLE);
 #endif
 
+#if 0
 			timer->expires = 100;			
 			timer->data = (unsigned long)cdata;
 			timer->function = write_framebuffer;
 			add_timer(timer);
+#else
+			schedule_work(&cdata->work);
+#endif
 #ifdef __ENABLE_REENTRANT__
 			mutex_unlock(&cdata->write_lock);
 #endif
@@ -212,11 +229,24 @@ exit:
 	return ret;
 }
 
+static int cdata_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+    unsigned long start = vma->vm_start;
+    unsigned long end = vma->vm_end;
+    unsigned long size = end - start;
+
+    printk(KERN_ALERT "remap %p to 0xe0000000\n", start);
+    remap_pfn_range(vma, start, 0xe0000000, size, PAGE_SHARED);
+
+    return 0;
+}
+
 static struct file_operations cdata_fops = {
     owner:      	THIS_MODULE,
     open:		cdata_open,
     read:		cdata_read,
     write:		cdata_write,
+    mmap:		cdata_mmap,
     unlocked_ioctl:	cdata_ioctl,
     release:    	cdata_close
 };
