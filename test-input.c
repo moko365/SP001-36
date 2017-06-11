@@ -10,5 +10,8 @@ int main(void)
     pid_t child;
 
     fd = open("/dev/cdata-ts", O_RDWR);
+    while(1) {
+	sleep(60);
+    }
     close(fd);
 }
