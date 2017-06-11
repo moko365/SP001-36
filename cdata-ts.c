@@ -23,11 +23,13 @@ struct cdata_ts {
 };
 
 static int ts_input_open(struct input_dev *dev)
-{	
+{
+	//return 0;	
 }
 
 static int ts_input_close(struct input_dev *dev)
 {
+	return 0;	
 }
 
 static int cdata_ts_open(struct inode *inode, struct file *filp)
@@ -73,6 +75,13 @@ static ssize_t cdata_ts_write(struct file *filp, const char *buf, size_t size,
 
 static int cdata_ts_close(struct inode *inode, struct file *filp)
 {
+	struct cdata_ts *cdata = (struct cdata_ts *)filp->private_data;
+
+	input_unregister_device(cdata->ts_input);
+
+	input_free_device(cdata->ts_input);
+	kfree(cdata);
+
 	return 0;
 }
 
@@ -102,7 +111,8 @@ int cdata_ts_init_module(void)
 
 void cdata_ts_cleanup_module(void)
 {
-	misc_register(&cdata_ts_misc);
+	misc_deregister(&cdata_ts_misc);
+	printk(KERN_INFO "CDATA-TS: cdata_ts_cleanup_module\n");
 }
 
 module_init(cdata_ts_init_module);
