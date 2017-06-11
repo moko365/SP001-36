@@ -24,7 +24,7 @@ struct cdata_ts {
 
 static int ts_input_open(struct input_dev *dev)
 {
-	//return 0;	
+	return 0;	
 }
 
 static int ts_input_close(struct input_dev *dev)
